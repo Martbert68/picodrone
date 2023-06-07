@@ -53,15 +53,16 @@
 struct event { uint64_t time[400]; int key[400]; int onoff[400];};
 
 // global variables between knobs and oscillators
-int deviate[14],updown[14],filt,leds[4],del,amp[14],voice,rev,oct,cut,peak;
+int filt,leds[4],del,amp[14],voice,rev,oct,cut,peak;
 
 // convert recoded events into playable events
 int retime (struct event *e, struct event *f,uint64_t start, int speed, int rel)
 {
 	int i;
+	speed+=2048;
 	for (i=0;i<100;i++)
 	{
-		f->time[i]=((e->time[i]*(uint64_t)speed)/2048)+start;
+		f->time[i]=(e->time[i]*4096/(uint64_t)speed)+start;
 		f->key[i]=e->key[i];
 		// unrelaible?
 		if (rand()%4097<rel) { f->onoff[i]=e->onoff[i];}else{f->onoff[i]=0;}
@@ -107,13 +108,13 @@ void knobs_thread()
 
     int a,d,amps[14],flash,flashc,led,seqc,speed,rel,att,dec,sus;
     int wwd,i,attack[14],sm,switches[20],press[20],pot1,pot2,pot3,bounce;
-    int filtl,mode,octs,env,wiggle,wd,fp,hold,play,playp,octl,oc,octf,ood,od;
+    int filtl,mode,octs,wiggle,wd,fp,hold,play,playp,octl,oc,octf,ood,od;
      a=0;d=0;
     voice=0; rev=0; sm=0; seqc=0; octl=0;oc=0;octf=0;
-    env=1; tick=0; mode=0; wd=0; wwd=wd; filtl=132000; record=0;wiggle=0;
+    tick=0; mode=0; wd=0; wwd=wd; filtl=132000; record=0;wiggle=0;
     od=0;ood=od;
-    for (i=0;i<14;i++){amp[i]=0;amps[i]=0;attack[i]=0;switches[i]=0;press[i]=0;deviate[i]=0;}
-    for (i=0;i<4;i++){leds[i]=1;updown[i]=1;}
+    for (i=0;i<14;i++){amp[i]=0;amps[i]=0;attack[i]=0;switches[i]=0;press[i]=0;}
+    for (i=0;i<4;i++){leds[i]=1;}
     leds[0]=0;flash=0;flashc=0;led=0;playp=0;
     oct=48; octs=48;cut=65536; peak=65536; del=10000; bounce=0;hold=0;play=0;speed=2048;rel=4096;
     att=1;dec=1;sus=4096;
@@ -133,14 +134,9 @@ void knobs_thread()
 	}
 	// overload
 	if (count<3) { leds[0]=0;leds[1]=0;leds[2]=0;leds[3]=0;} else{
-	//led handler
-	flashc++;if (flashc>16000){flashc=0;}
-	if (flash && flashc<(9000/flash)){ led=1;}else{led=0;}
-	if (mode==0){ leds[0]=led;leds[1]=1;leds[2]=1;leds[3]=1;}
-	else if (mode==1){ leds[0]=1;leds[1]=led;leds[2]=1;leds[3]=1;}
-	else if (mode==2){ leds[0]=1;leds[1]=1;leds[2]=led;leds[3]=1;}
-	else if (mode==3){ leds[0]=1;leds[1]=1;leds[2]=1;leds[3]=led;}
-	else if (mode==4){ leds[0]=1;leds[1]=led;leds[2]=led;leds[3]=1;}
+		//led handler
+		flashc++;if (flashc>16000){flashc=0;}
+		if (flash && flashc<(9000/flash)){ led=1;}else{led=0;}
 	}
 
 	// switch mux
@@ -203,13 +199,13 @@ void knobs_thread()
 	
 	// filter wiggle
 	wiggle+=wd;
-	if (wiggle>480000){ wiggle=480000;wd=-(wwd+10);}
-	if (wiggle<0){ wiggle=0;wd=(wwd+10);}
+	if (wiggle>819200){ wiggle=819200;wd=-wwd;}
+	if (wiggle<0){ wiggle=0;wd=wwd;}
 
 	// octave wiggle
 	oc+=od;
-	if (oc>480000){ oc=480000;od=-(ood+10);}
-	if (oc<0){ oc=0;od=(ood+10);}
+	if (oc>480000){ oc=480000;od=-ood;}
+	if (oc<0){ oc=0;od=ood;}
 
 
 	//adc 
@@ -225,7 +221,7 @@ void knobs_thread()
 	tot=0;
 	for (i=0;i<14;i++) { tot+=amps[i]; }
 	if (tot>8191){ 
-		for (i=0;i<14;i++) { amp[i]=amps[i]*8190/tot; }
+		for (i=0;i<14;i++) { amp[i]=amps[i]*8192/tot; }
 	}
 	else{
 		for (i=0;i<14;i++) { amp[i]=amps[i];}
@@ -237,8 +233,8 @@ void knobs_thread()
 		if (f->time[playp]<wanted)
 		{
 			switches[f->key[playp]]=f->onoff[playp];
-			playp++;
 			leds[2]=0;
+			playp++;
 		}
 		if (playp>=seqc)
 		{
@@ -249,16 +245,12 @@ void knobs_thread()
 
 	}
 
-	// for a longer ADSR the tick value has to be reached before any calculation of amplitude changes.	
-	//if (tick>=env)
-	//if (tick>1000000){tick=0;}
 	if (a>=att){ a=0;}
 	if (d>=dec){ d=0;}
 	for (i=0;i<14;i++)
 	{	
 		if (switches[i] )
 		{
-			deviate[i]++;
 			if (!press[i]){ attack[i]=1;press[i]=1;amps[i]=0;
 				// sequencer
 				if (record){e->time[seqc]=wanted-rec_start;e->key[seqc]=i;e->onoff[seqc]=1;seqc++;}
@@ -267,17 +259,17 @@ void knobs_thread()
 			if (switches[15]){attack[i]=5; switches[15]=0;}
 			// unhold everything
 			if (switches[14]){ int j; for (j=0;j<14;j++){attack[j]=4; switches[14]=0;} break;}
-		} else { press[i]=0;deviate[i]=0;}
+		} else { press[i]=0;}
 		
 	
 		// ADSR	
 		// 1 Attack grow from 0 to 8191
 		if (attack[i]==1 && !a)
 		{
-			if (amps[i]<8191 ){ amps[i]+=4;updown[i]=0;}else{amps[i]=8191;attack[i]=2;}
+			if (amps[i]<8191 ){ amps[i]+=4;}else{amps[i]=8191;attack[i]=2;}
 		// 2 decay drop to half 
 		} else if ( attack[i]==2 && !d) {
- 			if (amps[i]>sus ){ amps[i]-=4;}else{attack[i]=3;updown[i]=1;}
+ 			if (amps[i]>sus ){ amps[i]-=4;}else{attack[i]=3;}
 		// 3 sustain stay at half until key released 
 		} else if (attack[i]==3) {
 			if ( !switches[i]){ attack[i]=4;
@@ -295,15 +287,18 @@ void knobs_thread()
 	// release 14
 	if (!switches[14] && press[14] ){ 
 		press[14]=0; 
-		if (mode==0 ){ octs+=12; if (octs>60){octs=24;} }
-		if (mode==1){ voice=1-voice; }
-		if (mode==2){ rev++;if (rev>2){rev=0;}}
-		if (mode==3){ env*=2;if (env>640){env=1;}}
-		if (mode==4){
-			if (!record && !play){flash=3;record=1;seqc=0;rec_start=wanted;}
-			else if (record){flash=5;record=0;
-				if (seqc>0){ play=1; retime(e,f,wanted,2048,4096); playp=0;} else{ flash=0;} 
-			}else if (play){ flash=0;play=0;}
+		switch (mode)
+		{	
+			case 0 : octs+=12; if (octs>60){octs=24;}  break;
+			case 1 : voice=1-voice; break;
+			case 2 : rev++;if (rev>2){rev=0;} break;
+			case 3 : break;
+			case 4 :	
+				if (!record && !play){flash=3;record=1;seqc=0;rec_start=wanted;}
+				else if (record){flash=5;record=0;
+					if (seqc>0){ play=1; retime(e,f,wanted,2048,4096); playp=0;} else{ flash=0;} 
+				}else if (play){ flash=0;play=0;}
+				break;
 		}
 	}
 	// in bounce mode switch 15 is disabled for a while.
@@ -318,42 +313,53 @@ void knobs_thread()
 		if (!flash ) { mode++;if (mode>4){mode=0;}}
 		bounce=1;
 	}
-	// cut thresh and filter
-	if (flash)
-	{
-		// octaves 
-		if (mode==0 ){ octs=36+(pot1/100) ;
-			wwd=pot2/10;
-			ood=pot3/10;
-		}
-		// voices 
-		if (mode==1){
-			cut=(pot1*17);
-       			peak=65536-(32*pot2);
-			filtl=pot3*4096;
-		}
-		// delay time 
-		if (mode==2){ 
-			del=(8*pot1)+10000;
-			wwd=(pot2/10);
-			filtl=pot3*4096;
-		}
-		// ADSR
-		if (mode==3)
-		{
-			att=(pot1/100);
-			dec=(pot2/100);
-			sus=(pot3);
-		}
-		if (mode==4 && flash==1)
-		{
-			speed=100+pot1;
-			rel=pot2;
-		}
 
+	// this big switch is useful I bunged the LEDS in here
+	// octaves 
+	switch (mode)
+	{
+	case 0 : 
+		leds[0]=led;leds[1]=1;leds[2]=1;leds[3]=1; 
+		if (flash==1){
+	 	octs=36+(pot1/100) ;
+		wwd=pot2/10;
+		ood=pot3/10; }
+		break;
+	// voices 
+	case 1 :
+		leds[0]=1;leds[1]=led;leds[2]=1;leds[3]=1; 
+		if (flash==1) {
+		cut=(pot1*17);
+       		peak=65536-(32*pot2);
+		filtl=pot3*4096;}
+		break;
+
+	// delay time 
+	case 2  :
+		leds[0]=1;leds[1]=1;leds[2]=led;leds[3]=1; 
+		if (flash==1){
+		del=(8*pot1)+10000;
+		wwd=(pot2/10);
+		filtl=pot3*4096;}
+		break;
+	// ADSR
+	case 3 :	
+		leds[0]=1;leds[1]=1;leds[2]=1;leds[3]=led; 
+		if (flash==1){
+		att=(pot1/100);
+		dec=(pot2/100);
+		sus=(pot3);}
+		break;
+	case 4 :
+		leds[0]=1;leds[1]=led;leds[2]=led;leds[3]=1;
+		if (flash==1){
+		speed=100+pot1;
+		rel=pot2;}
+		break;
 	}
-	if (wwd<10){filt=filtl;}else{filt=filtl+(wiggle*10);}
-	if (ood<10){oct=octs;}else{oct=octs+(oc/150000)-1;}
+	filt=filtl;
+	if (wwd<10){filt=filtl;wd=10;wiggle=0;}else{filt=filtl+(wiggle*10);}
+	if (ood<10){oct=octs;od=10;oc=0;}else{oct=octs+(oc/150000)-1;}
     }
 }
 
@@ -437,7 +443,7 @@ int main()
 		if (voice)
 		{
 			for (i=0;i<14;i++){ 
-				sig[i]+=slews[i+oct]+(deviate[i]/30000);
+				sig[i]+=slews[i+oct];
 				if (sig[i]>65535){sig[i]-=131072;}
 				int t;
 				t=sig[i];
@@ -445,40 +451,20 @@ int main()
 				if (t>cut ){ t=peak;}
 				if (t<-cut){ t=-peak;}
 
-				/*
-				// filter
-				int df;
-				df=t-sigp[i];
-				if (df>filt){ t=sigp[i]+filt;}
-				if (df<-filt){ t=sigp[i]-filt;}
-				//t=t-(df*filt/4096);
-				sigp[i]=t; */
-
 				sig_tot+=t*amp[i];
 			}
 		}else{
 			for (i=0;i<14;i++){ 
 				short tls;
 				tls=slew[i+oct];
-				sig[i]+=tls+(deviate[i]/30000);
+				sig[i]+=tls;
 				if (sig[i]>65535){sig[i]=131072-sig[i];slew[i+oct]=-tls;}
 				if (sig[i]<-65535){sig[i]=-131072-sig[i];slew[i+oct]=-tls;} 
-				/*if (sig[i]>65535){sig[i]=65535;slew[i+oct]=-tls;}
-				if (sig[i]<-65535){sig[i]=-65535;slew[i+oct]=-tls;} */
 				int t;
 				t=sig[i];
 				//thresh
 				if (t>cut ){ t=peak;}
 				if (t<-cut){ t=-peak;}
-
-				/*
-				// filter
-				int df;
-				df=t-sigp[i];
-				if (df>filt){ t=sigp[i]+filt;}
-				if (df<-filt){ t=sigp[i]-filt;}
-				//t=t-(df*filt/4096);
-				sigp[i]=t; */
 
 				sig_tot+=t*amp[i];
 			}
@@ -495,17 +481,17 @@ int main()
 			buff_point++;if (buff_point>buffer_size){buff_point=0;}
 			delay_point=buff_point-(del);if (delay_point<0){delay_point+=buffer_size;}
 			buffer[buff_point]=sig_tot;
-			d_to_a(((sig_tot+buffer[delay_point])/171072));}
+			d_to_a(((sig_tot+buffer[delay_point])/181072));}
 		else if (rev==2)
 		{
 			buff_point++;if (buff_point>buffer_size){buff_point=0;}
 			delay_point=buff_point-(del);if (delay_point<0){delay_point+=buffer_size;}
 			sig_tot+=buffer[delay_point]/2;
 			buffer[buff_point]=sig_tot;
-			d_to_a((sig_tot/171072));
+			d_to_a((sig_tot/181072));
 		}
 		else {
-			d_to_a((sig_tot/101072));
+			d_to_a((sig_tot/131072));
 		}
 	}
 }
