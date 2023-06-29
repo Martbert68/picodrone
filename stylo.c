@@ -53,7 +53,7 @@
 struct event { uint64_t time[400]; int key[400]; int onoff[400];};
 
 // global variables between knobs and oscillators
-int filt,leds[4],del,amp[14],voice,rev,oct,cut,peak;
+int trem,filt,latch,del,amp[14],voice,rev,oct,cut,peak;
 
 // convert recoded events into playable events
 int retime (struct event *e, struct event *f,uint64_t start, int speed, int rel)
@@ -70,9 +70,26 @@ int retime (struct event *e, struct event *f,uint64_t start, int speed, int rel)
 }
 
 // 14 bit D to A. Add 8192 to give 0-16384 range from +/- 8192 input
-int d_to_a ( unsigned int val)
+int d_to_a ( int val)
 {
-	val+=8192;
+	uint32_t set,value;
+	static uint32_t mask;
+	int i;
+
+	mask=16383;
+	value=0;
+
+	val+=8191;
+	if (val<0 || val >16383){latch=5000;}
+
+	for (i=0;i<14;i++)
+	{
+		value=val&1;
+		value<<=1;val>>=1;
+
+	}
+	gpio_put_masked	(mask,value);
+/*
 	gpio_put(13,val&1);
 	gpio_put(12,val&2);
 	gpio_put(11,val&4);
@@ -85,15 +102,15 @@ int d_to_a ( unsigned int val)
 	gpio_put(4,val&512);
 	gpio_put(3,val&1024);
 	gpio_put(2,val&2048);
-	gpio_put(1,val&4096);
-	gpio_put(0,val&8192);
+	gpio_put(1,val&4096); */
+
 }
 
 // this controls all the knobs and switches and LEDS.
 void knobs_thread()
 {
     uint64_t delay,wanted,rec_start;
-    int record,pot1l,pot2l,pot3l,pot1n,pot2n,pot3n,tick;
+    int record,pot1l,pot2l,pot3l,pot1n,pot2n,pot3n,tick,tremd;
 
     static uint64_t outrate=30000;
 
@@ -106,18 +123,19 @@ void knobs_thread()
     e=(struct event *)malloc(sizeof(struct event));
     f=(struct event *)malloc(sizeof(struct event));
 
-    int a,d,amps[14],flash,flashc,led,seqc,speed,rel,att,dec,sus;
+    int a,d,amps[14],leds[4],flash,flashc,led,seqc,speed,rel,att,dec,sus;
     int wwd,i,attack[14],sm,switches[20],press[20],pot1,pot2,pot3,bounce;
     int filtl,mode,octs,wiggle,wd,fp,hold,play,playp,octl,oc,octf,ood,od;
-     a=0;d=0;
+     a=0;d=0;tremd=0;
     voice=0; rev=0; sm=0; seqc=0; octl=0;oc=0;octf=0;
     tick=0; mode=0; wd=0; wwd=wd; filtl=132000; record=0;wiggle=0;
     od=0;ood=od;
+    latch=0;
     for (i=0;i<14;i++){amp[i]=0;amps[i]=0;attack[i]=0;switches[i]=0;press[i]=0;}
     for (i=0;i<4;i++){leds[i]=1;}
     leds[0]=0;flash=0;flashc=0;led=0;playp=0;
-    oct=48; octs=48;cut=65536; peak=65536; del=10000; bounce=0;hold=0;play=0;speed=2048;rel=4096;
-    att=1;dec=1;sus=4096;
+    oct=48; octs=48;cut=65537; peak=65535; del=10000; bounce=0;hold=0;play=0;speed=2048;rel=4096;
+    att=1;dec=1;sus=4096;oc=0;
 
 
     sleep_ms(400);
@@ -133,7 +151,9 @@ void knobs_thread()
 		count++;
 	}
 	// overload
-	if (count<3) { leds[0]=0;leds[1]=0;leds[2]=0;leds[3]=0;} else{
+	if (count<3) {latch=5000;}
+	
+	if(latch){ latch--;leds[0]=0;leds[1]=0;leds[2]=0;leds[3]=0;} else{
 		//led handler
 		flashc++;if (flashc>16000){flashc=0;}
 		if (flash && flashc<(9000/flash)){ led=1;}else{led=0;}
@@ -205,7 +225,7 @@ void knobs_thread()
 	// octave wiggle
 	oc+=od;
 	if (oc>480000){ oc=480000;od=-ood;}
-	if (oc<0){ oc=0;od=ood;}
+	if (oc<-480000){ oc=-480000;od=ood;}
 
 
 	//adc 
@@ -220,8 +240,8 @@ void knobs_thread()
 	int tot;
 	tot=0;
 	for (i=0;i<14;i++) { tot+=amps[i]; }
-	if (tot>8191){ 
-		for (i=0;i<14;i++) { amp[i]=amps[i]*8192/tot; }
+	if (tot>16384){ 
+		for (i=0;i<14;i++) { amp[i]=amps[i]*16384/tot; }
 	}
 	else{
 		for (i=0;i<14;i++) { amp[i]=amps[i];}
@@ -318,19 +338,20 @@ void knobs_thread()
 	// octaves 
 	switch (mode)
 	{
+	// octaves
 	case 0 : 
 		leds[0]=led;leds[1]=1;leds[2]=1;leds[3]=1; 
 		if (flash==1){
 	 	octs=36+(pot1/100) ;
 		wwd=pot2/10;
-		ood=pot3/10; }
+		ood=pot3/5; }
 		break;
 	// voices 
 	case 1 :
 		leds[0]=1;leds[1]=led;leds[2]=1;leds[3]=1; 
 		if (flash==1) {
 		cut=(pot1*17);
-       		peak=65536-(32*pot2);
+       		peak=65535-(31*pot2);
 		filtl=pot3*4096;}
 		break;
 
@@ -339,8 +360,8 @@ void knobs_thread()
 		leds[0]=1;leds[1]=1;leds[2]=led;leds[3]=1; 
 		if (flash==1){
 		del=(8*pot1)+10000;
-		wwd=(pot2/10);
-		filtl=pot3*4096;}
+		ood=pot2/5; 
+		tremd=pot3/10; }
 		break;
 	// ADSR
 	case 3 :	
@@ -350,6 +371,7 @@ void knobs_thread()
 		dec=(pot2/100);
 		sus=(pot3);}
 		break;
+	// sequencer
 	case 4 :
 		leds[0]=1;leds[1]=led;leds[2]=led;leds[3]=1;
 		if (flash==1){
@@ -358,8 +380,10 @@ void knobs_thread()
 		break;
 	}
 	filt=filtl;
+	oct=octs;
 	if (wwd<10){filt=filtl;wd=10;wiggle=0;}else{filt=filtl+(wiggle*10);}
-	if (ood<10){oct=octs;od=10;oc=0;}else{oct=octs+(oc/150000)-1;}
+	//if (ood<10){oct=octs;od=10;oc=0;}else{oct=octs+(oc/150000)-1;}
+	if (ood<10){od=10;oc=0;trem=0;}else{trem=((oc/500)*tremd)/5000;}
     }
 }
 
@@ -436,14 +460,14 @@ int main()
 			sleep_us(1);
 			count++;
 		}
-		if (count<3) { leds[3]=0;leds[2]=0;leds[1]=0;leds[0]=0;wanted+=wait;} 
+		if (count<3) { latch=5000;} 
 
 		int sig_tot;
 		sig_tot=0;
 		if (voice)
 		{
 			for (i=0;i<14;i++){ 
-				sig[i]+=slews[i+oct];
+				sig[i]+=slews[i+oct]+trem;
 				if (sig[i]>65535){sig[i]-=131072;}
 				int t;
 				t=sig[i];
@@ -451,12 +475,14 @@ int main()
 				if (t>cut ){ t=peak;}
 				if (t<-cut){ t=-peak;}
 
+				if (amp[i]<10){sig[i]=0;}
+
 				sig_tot+=t*amp[i];
 			}
 		}else{
 			for (i=0;i<14;i++){ 
-				short tls;
-				tls=slew[i+oct];
+				int tls;
+				tls=slew[i+oct]+trem;
 				sig[i]+=tls;
 				if (sig[i]>65535){sig[i]=131072-sig[i];slew[i+oct]=-tls;}
 				if (sig[i]<-65535){sig[i]=-131072-sig[i];slew[i+oct]=-tls;} 
@@ -466,6 +492,7 @@ int main()
 				if (t>cut ){ t=peak;}
 				if (t<-cut){ t=-peak;}
 
+				if (amp[i]<10){sig[i]=0;}
 				sig_tot+=t*amp[i];
 			}
 		}
@@ -481,17 +508,17 @@ int main()
 			buff_point++;if (buff_point>buffer_size){buff_point=0;}
 			delay_point=buff_point-(del);if (delay_point<0){delay_point+=buffer_size;}
 			buffer[buff_point]=sig_tot;
-			d_to_a(((sig_tot+buffer[delay_point])/181072));}
+			d_to_a(((sig_tot+buffer[delay_point])/262072));}
 		else if (rev==2)
 		{
 			buff_point++;if (buff_point>buffer_size){buff_point=0;}
 			delay_point=buff_point-(del);if (delay_point<0){delay_point+=buffer_size;}
 			sig_tot+=buffer[delay_point]/2;
 			buffer[buff_point]=sig_tot;
-			d_to_a((sig_tot/181072));
+			d_to_a((sig_tot/156072));
 		}
 		else {
-			d_to_a((sig_tot/131072));
+			d_to_a((sig_tot/131073));
 		}
 	}
 }
